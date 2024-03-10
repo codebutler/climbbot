@@ -1,31 +1,22 @@
-import {
-  REST,
-  Routes,
-  Client,
-  GatewayIntentBits,
-  Events,
-  SlashCommandBuilder,
-  ChatInputCommandInteraction,
-} from "discord.js";
 import * as cmd from "cmd-ts";
+import { serve } from "bun";
+import * as dc from "discord-hono";
+import { bunCryptoFix } from "./bun-crypto-fix";
+import { pluralize } from "./utils";
 
-type Gyms = Record<
-  string,
-  {
-    name: string;
-    getClimberCount: () => Promise<string>;
-  }
->;
+bunCryptoFix();
 
-type SlashCommands = Record<
-  string,
-  {
-    data: Partial<SlashCommandBuilder>;
-    execute: (interaction: ChatInputCommandInteraction) => Promise<void>;
-  }
->;
+interface Gym {
+  name: string;
+  getClimberCount: () => Promise<number>;
+}
 
-const gyms: Gyms = {
+interface CommandWithHandler {
+  command: dc.Command;
+  handler: (context: dc.CommandContext) => Promise<Response>;
+}
+
+const gyms: { [gymId: string]: Gym } = {
   "vital-brooklyn": {
     name: "Vital Brooklyn",
     getClimberCount: async () => {
@@ -33,36 +24,36 @@ const gyms: Gyms = {
         "https://display.safespace.io/value/live/a7796f34",
       );
       const count = await resp.text();
-      return count;
+      return parseInt(count);
     },
   },
 };
 
-const slashCommands: SlashCommands = {
+const slashCommands: { [commandName: string]: CommandWithHandler } = {
   climbers: {
-    data: new SlashCommandBuilder()
-      .setName("climbers")
-      .setDescription("Get the current number of climbers at a gym")
-      .addStringOption((option) =>
-        option
-          .setName("gym")
-          .setDescription("The gym to get the number of climbers for")
-          .addChoices(
-            ...Object.entries(gyms).map(([key, { name }]) => ({
-              name,
-              value: key,
-            })),
-          ),
+    command: new dc.Command(
+      "climbers",
+      "Get the current number of climbers at a gym",
+    ).options(
+      new dc.Option("gym", "The gym to get the number of climbers for").choices(
+        ...Object.entries(gyms).map(([value, { name }]) => ({ name, value })),
       ),
-    execute: async (interaction) => {
-      const gymKey =
-        interaction.options.getString("gym") ?? Object.keys(gyms)[0];
-      const gym = gyms[gymKey as keyof typeof gyms];
+    ),
+    handler: async (context) => {
+      const gymKey = context.values["gym"]?.toString() ?? Object.keys(gyms)[0];
+      const gym = gyms[gymKey];
       if (!gym) {
-        return;
+        throw new Error(`Gym not found: ${gymKey}`);
       }
       const count = await gym.getClimberCount();
-      await interaction.reply(`There are ${count} climbers at ${gym.name}`);
+      const message = pluralize(
+        {
+          one: `There is # climber at ${gym.name}`,
+          other: `There are # climbers at ${gym.name}`,
+        },
+        count,
+      );
+      return context.res(message);
     },
   },
 };
@@ -71,10 +62,10 @@ const register = cmd.command({
   name: "Register",
   description: "Register slash commands with Discord",
   args: {
-    discordClientId: cmd.option({
+    discordApplicationId: cmd.option({
       type: cmd.string,
-      env: "DISCORD_CLIENT_ID",
-      long: "discord-client-id",
+      env: "DISCORD_APPLICATION_ID",
+      long: "discord-application-id",
     }),
     discordToken: cmd.option({
       type: cmd.string,
@@ -82,12 +73,13 @@ const register = cmd.command({
       long: "discord-token",
     }),
   },
-  handler: async ({ discordClientId, discordToken }) => {
-    const rest = new REST().setToken(discordToken);
-    await rest.put(Routes.applicationCommands(discordClientId), {
-      body: Object.values(slashCommands).map(({ data }) => data.toJSON!()),
-    });
-    console.log("Successfully registered slash commands.");
+  handler: async ({ discordApplicationId, discordToken }) => {
+    await dc.register(
+      Object.values(slashCommands).map((c) => c.command),
+      discordApplicationId,
+      discordToken,
+    );
+    console.log("ClimbBot registered slash commands!");
   },
 });
 
@@ -95,35 +87,37 @@ const start = cmd.command({
   name: "Start",
   description: "Start the bot",
   args: {
+    discordApplicationId: cmd.option({
+      type: cmd.string,
+      env: "DISCORD_APPLICATION_ID",
+      long: "discord-application-id",
+    }),
+    discordPublicKey: cmd.option({
+      type: cmd.string,
+      env: "DISCORD_PUBLIC_KEY",
+      long: "discord-public-key",
+    }),
     discordToken: cmd.option({
       type: cmd.string,
       env: "DISCORD_TOKEN",
       long: "discord-token",
     }),
   },
-  handler: ({ discordToken }) => {
-    const client = new Client({ intents: [GatewayIntentBits.Guilds] });
-    console.log("Starting bot");
-    client.once(Events.ClientReady, (readyClient) => {
-      console.log(`Ready! Logged in as ${readyClient.user.tag}`);
-    });
-    client.on(Events.InteractionCreate, async (interaction) => {
-      if (!interaction.isChatInputCommand()) {
-        return;
-      }
-      const slashCmd = slashCommands[interaction.commandName];
-      if (!slashCmd) {
-        return;
-      }
-      await slashCmd.execute(interaction);
-    });
-    client.login(discordToken);
-
-    // for health checks
-    Bun.serve({
+  handler: ({ discordApplicationId, discordPublicKey, discordToken }) => {
+    const discordApp = new dc.DiscordHono();
+    discordApp.discordKey(() => ({
+      APPLICATION_ID: discordApplicationId,
+      PUBLIC_KEY: discordPublicKey,
+      TOKEN: discordToken,
+    }));
+    for (const [name, cmd] of Object.entries(slashCommands)) {
+      discordApp.command(name, async (c) => cmd.handler(c));
+    }
+    serve({
+      fetch: (req) => discordApp.fetch(req),
       port: 8080,
-      fetch: () => new Response("OK!"),
     });
+    console.log("ClimbBot is running!");
   },
 });
 

@@ -1,10 +1,10 @@
+<img src="logo.png" width="200">
+
 # ClimbBot
 
-Discord bot that dislpays the number of people at the Vital climbing gym in Brooklyn.
+Discord bot that displays the number of people at the Vital climbing gym in Brooklyn.
 
-Invite to your server:
-
-https://discord.com/oauth2/authorize?client_id=1216457310906617886&permissions=2147483648&scope=bot+applications.commands
+* [Invite ClimbBot to your Discord server](https://discord.com/oauth2/authorize?client_id=1216457310906617886&permissions=2147483648&scope=bot+applications.commands)
 
 
 ## Development
@@ -20,7 +20,8 @@ To run:
 Create a .env file with the following:
 
 ```
-DISCORD_CLIENT_ID=your_discord_client_id
+DISCORD_APPLICATION_ID=your_discord_application_id
+DISCORD_PUBLIC_KEY=your_discord_public_key
 DISCORD_TOKEN=your_discord_token
 ```
 
