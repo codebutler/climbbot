@@ -1,0 +1,15 @@
+{
+  "name": "climbbot",
+  "module": "index.ts",
+  "type": "module",
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "cmd-ts": "^0.13.0",
+    "discord.js": "^14.14.1"
+  }
+}
